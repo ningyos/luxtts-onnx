@@ -1,6 +1,6 @@
 [project]
 name = "luxtts-onnx"
-version = "0.1.0"
+version = "0.1.1"
 description = "Lightweight ONNX-based TTS inference for LuxTTS -- no PyTorch required"
 requires-python = ">=3.11"
 license = "Apache-2.0"

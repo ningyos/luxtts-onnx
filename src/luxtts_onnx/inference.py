@@ -377,6 +377,28 @@ class LuxTTSOnnx:
 
         batch_size, num_frames, _ = text_condition.shape
 
+        # Guard: text_encoder's predicted total duration can be shorter than the
+        # prompt itself when generation text is much shorter than the prompt
+        # (e.g. a 15s reference with "ok"). That would leave zero or negative
+        # generation frames after the prompt slice, and vocos would crash on
+        # empty input. Extend text_condition by edge-padding so there is room
+        # for at least MIN_GEN_FRAMES of generated audio.
+        MIN_GEN_FRAMES = 16  # ~170ms at hop=256, sr=24000
+        prompt_t = int(prompt_features_len)
+        required = prompt_t + MIN_GEN_FRAMES
+        if num_frames < required:
+            pad = required - num_frames
+            logger.warning(
+                "text_encoder predicted %d frames but prompt needs %d; "
+                "padding text_condition by %d frames to ensure non-empty output. "
+                "Consider using a shorter reference prompt for very short text.",
+                num_frames, prompt_t, pad,
+            )
+            text_condition = np.pad(
+                text_condition, ((0, 0), (0, pad), (0, 0)), mode="edge",
+            ).astype(np.float32)
+            num_frames = required
+
         # Time schedule
         timesteps = get_time_steps(
             t_start=0.0, t_end=1.0, num_step=num_steps, t_shift=t_shift,
@@ -386,9 +408,9 @@ class LuxTTSOnnx:
         x = np.random.randn(batch_size, num_frames, self.feat_dim).astype(np.float32)
 
         # Pad or truncate prompt features to match num_frames
-        prompt_t = prompt_features.shape[1]
-        if prompt_t <= num_frames:
-            pad_width = num_frames - prompt_t
+        prompt_feat_t = prompt_features.shape[1]
+        if prompt_feat_t <= num_frames:
+            pad_width = num_frames - prompt_feat_t
             speech_condition = np.pad(
                 prompt_features, ((0, 0), (0, pad_width), (0, 0)), mode="constant",
             ).astype(np.float32)
@@ -427,7 +449,7 @@ class LuxTTSOnnx:
                 x = x_1_pred
 
         # Remove prompt portion
-        prompt_len = int(prompt_features_len)
+        prompt_len = min(int(prompt_features_len), x.shape[1] - 1)
         x = x[:, prompt_len:, :]  # [1, gen_frames, feat_dim]
 
         # Convert features to vocos input: [B, feat_dim, T] / scale
